@@ -1,6 +1,7 @@
 *.exe
 *.bat
 *.spec
+.vs/
 build/
 dist/
 __pycache__/
