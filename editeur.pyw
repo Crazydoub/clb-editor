@@ -2,11 +2,16 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import xml.etree.ElementTree as ET
 import copy
+import shutil
 
 class CLBEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("LightBurn CLB Editor")
+        self.root.geometry("1200x650")
+
+        style = ttk.Style()
+        style.theme_use("clam")
 
         self.tree = None
         self.filepath = None
@@ -38,11 +43,10 @@ class CLBEditor:
         # === MATERIALS ===
         mat_frame = ttk.LabelFrame(body, text="Matériaux")
         mat_frame.pack(side="left", fill="y")
-        mat_frame.pack_propagate(False)
         mat_frame.config(width=200)
 
-        self.mat_list = tk.Listbox(mat_frame, width=25)
-        self.mat_list.pack(fill="y", expand=True)
+        self.mat_list = tk.Listbox(mat_frame)
+        self.mat_list.pack(fill="both", expand=True)
 
         self.mat_list.bind("<<ListboxSelect>>", self.select_material)
         self.mat_list.bind("<Double-Button-1>", self.rename_material)
@@ -53,22 +57,20 @@ class CLBEditor:
         # === ENTRIES ===
         entry_frame = ttk.LabelFrame(body, text="Profils")
         entry_frame.pack(side="left", fill="y")
-        entry_frame.pack_propagate(False)
         entry_frame.config(width=300)
 
-        self.entry_list = tk.Listbox(entry_frame, width=45)
-        self.entry_list.pack(fill="y", expand=True)
+        self.entry_list = tk.Listbox(entry_frame)
+        self.entry_list.pack(fill="both", expand=True)
 
         self.entry_list.bind("<<ListboxSelect>>", self.select_entry)
 
         ttk.Button(entry_frame, text="➕ Profil", command=self.add_entry).pack(fill="x")
         ttk.Button(entry_frame, text="📄 Dupliquer", command=self.duplicate_entry).pack(fill="x")
-        ttk.Button(entry_frame, text="❌ Supprimer profil", command=self.delete_entry).pack(fill="x")
+        ttk.Button(entry_frame, text="❌ Supprimer", command=self.delete_entry).pack(fill="x")
 
         # === EDIT ===
         edit = ttk.LabelFrame(body, text="Édition")
         edit.pack(side="left", fill="both", expand=True)
-        edit.pack_propagate(False)
 
         self.fields = {}
 
@@ -90,22 +92,32 @@ class CLBEditor:
         def add_slider(label, key, row, minv, maxv):
             ttk.Label(edit, text=label).grid(row=row, column=0)
 
-            var = tk.DoubleVar()
-            scale = ttk.Scale(edit, from_=minv, to=maxv, variable=var)
+            var = tk.IntVar()
+
+            scale = ttk.Scale(edit, from_=minv, to=maxv)
             scale.grid(row=row, column=1, sticky="ew")
 
             entry = ttk.Entry(edit, width=8)
             entry.grid(row=row, column=2)
 
-            def sync(val):
-                v = round(float(val), 2)
+            def sync_scale(val):
+                v = int(float(val))
                 var.set(v)
                 entry.delete(0, tk.END)
                 entry.insert(0, str(v))
 
-            scale.configure(command=sync)
+            def sync_entry(event):
+                try:
+                    v = int(entry.get())
+                    scale.set(v)
+                    var.set(v)
+                except:
+                    pass
 
-            self.slider_widgets[key] = (scale, entry)
+            scale.configure(command=sync_scale)
+            entry.bind("<KeyRelease>", sync_entry)
+
+            self.slider_widgets[key] = (scale, entry, var)
             return var
 
         self.speed = add_slider("Vitesse","speed",3,0,1000)
@@ -118,10 +130,19 @@ class CLBEditor:
 
         edit.columnconfigure(1, weight=1)
 
+    # === SAFE CHECK ===
+    def check_tree(self):
+        if self.tree is None:
+            messagebox.showerror("Erreur", "Aucun fichier chargé")
+            return False
+        return True
+
     # === UNDO ===
     def save_state(self):
         if self.tree is not None:
             self.undo_stack.append(copy.deepcopy(self.tree))
+            if len(self.undo_stack) > 50:
+                self.undo_stack.pop(0)
             self.redo_stack.clear()
 
     def undo(self):
@@ -137,6 +158,7 @@ class CLBEditor:
             self.refresh()
 
     def refresh(self):
+        if not self.check_tree(): return
         self.populate_materials()
         self.entry_list.delete(0, tk.END)
 
@@ -150,24 +172,28 @@ class CLBEditor:
 
     def save(self):
         if self.filepath:
+            shutil.copy(self.filepath, self.filepath + ".bak")
             self.tree.write(self.filepath)
 
     # === MATERIAL ===
     def populate_materials(self):
+        if not self.check_tree(): return
         self.mat_list.delete(0, tk.END)
         for m in self.tree.getroot().findall("Material"):
             self.mat_list.insert(tk.END, m.attrib.get("name"))
 
     def select_material(self, event):
+        if not self.check_tree(): return
         idx = self.mat_list.curselection()
         if idx:
             self.current_material = self.tree.getroot().findall("Material")[idx[0]]
             self.populate_entries()
 
     def add_material(self):
-        self.save_state()
+        if not self.check_tree(): return
         name = simpledialog.askstring("Nom","Nom matériau")
         if name:
+            self.save_state()
             ET.SubElement(self.tree.getroot(),"Material",{"name":name})
             self.populate_materials()
 
@@ -178,6 +204,7 @@ class CLBEditor:
             self.populate_materials()
 
     def rename_material(self, event):
+        if not self.check_tree(): return
         idx = self.mat_list.nearest(event.y)
         mat = self.tree.getroot().findall("Material")[idx]
         new = simpledialog.askstring("Rename","Nom",initialvalue=mat.attrib["name"])
@@ -202,13 +229,14 @@ class CLBEditor:
             self.load_entry()
 
     def add_entry(self):
+        if self.current_material is None: return
         self.save_state()
         e = ET.SubElement(self.current_material,"Entry",{"Thickness":"1","Desc":"New"})
         cut = ET.SubElement(e,"CutSetting",{"type":"Cut"})
         ET.SubElement(cut,"speed",{"Value":"100"})
         ET.SubElement(cut,"minPower",{"Value":"50"})
         ET.SubElement(cut,"maxPower",{"Value":"50"})
-        ET.SubElement(cut,"interval",{"Value":"0.1"})
+        ET.SubElement(cut,"interval",{"Value":"0"})
         self.populate_entries()
 
     def duplicate_entry(self):
@@ -224,13 +252,13 @@ class CLBEditor:
                 self.current_material.remove(self.current_entry)
                 self.populate_entries()
 
-    # === LOAD ENTRY ===
+    # === LOAD ===
     def load_entry(self):
         cut = self.current_entry.find("CutSetting")
 
         def get(tag):
             el = cut.find(tag)
-            return float(el.attrib["Value"]) if el is not None else 0
+            return int(float(el.attrib["Value"])) if el is not None else 0
 
         self.fields["Thickness"].delete(0, tk.END)
         self.fields["Thickness"].insert(0, self.current_entry.attrib.get("Thickness",""))
@@ -246,12 +274,10 @@ class CLBEditor:
         self.set_slider("interval", get("interval"))
 
     def set_slider(self, key, value):
-        scale, entry = self.slider_widgets[key]
-        try:
-            v = float(value)
-        except:
-            v = 0
+        scale, entry, var = self.slider_widgets[key]
+        v = int(value)
         scale.set(v)
+        var.set(v)
         entry.delete(0, tk.END)
         entry.insert(0, str(v))
 
@@ -262,8 +288,7 @@ class CLBEditor:
 
         self.save_state()
 
-        th = self.fields["Thickness"].get().strip() or "-1"
-        self.current_entry.attrib["Thickness"] = th
+        self.current_entry.attrib["Thickness"] = self.fields["Thickness"].get() or "-1"
         self.current_entry.attrib["Desc"] = self.fields["Desc"].get()
 
         cut = self.current_entry.find("CutSetting")
@@ -273,7 +298,7 @@ class CLBEditor:
             el = cut.find(tag)
             if el is None:
                 el = ET.SubElement(cut, tag)
-            el.attrib["Value"] = str(val)
+            el.attrib["Value"] = str(int(val))
 
         setv("speed", self.speed.get())
         setv("minPower", self.minPower.get())
@@ -284,6 +309,5 @@ class CLBEditor:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.geometry("1200x650")
     CLBEditor(root)
     root.mainloop()
