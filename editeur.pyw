@@ -48,6 +48,17 @@ class CLBEditor:
 
         ttk.Label(top, text="mm/s").pack(side="right", padx=10)
 
+
+        ttk.Label(top, text="Librairie").pack(side="left", padx=10)
+
+        self.display_name_var = tk.StringVar()
+        self.display_name_var.trace_add("write", lambda *args: self.apply_display_name())
+        entry_display = ttk.Entry(top, textvariable=self.display_name_var, width=25)
+        entry_display.pack(side="left")
+
+        ttk.Button(top, text="Appliquer nom", command=self.apply_display_name).pack(side="left", padx=5)
+
+
         # === BODY ===
         body = ttk.Frame(main)
         body.pack(fill="both", expand=True)
@@ -55,7 +66,7 @@ class CLBEditor:
         # === MATERIALS ===
         mat_frame = ttk.LabelFrame(body, text="Matériaux")
         mat_frame.pack(side="left", fill="y")
-        mat_frame.config(width=220)
+        mat_frame.config(width=350)
 
         self.mat_list = tk.Listbox(mat_frame)
         self.mat_list.pack(fill="both", expand=True)
@@ -71,7 +82,7 @@ class CLBEditor:
         # === ENTRIES ===
         entry_frame = ttk.LabelFrame(body, text="Profils")
         entry_frame.pack(side="left", fill="y")
-        entry_frame.config(width=300)
+        entry_frame.config(width=350)
 
         self.entry_list = tk.Listbox(entry_frame)
         self.entry_list.pack(fill="both", expand=True)
@@ -196,12 +207,25 @@ class CLBEditor:
             self.tree = ET.parse(path)
             self.filepath = path
             self.populate_materials()
+            root = self.tree.getroot()
+            self.display_name_var.set(root.attrib.get("DisplayName",""))
 
     def save(self):
         if self.filepath:
             shutil.copy(self.filepath, self.filepath + ".bak")
             ET.indent(self.tree, space="    ")
             self.tree.write(self.filepath, encoding="utf-8", xml_declaration=True)
+
+
+    def apply_display_name(self):
+        if self.tree is None:
+            return
+
+        self.save_state()
+
+        root = self.tree.getroot()
+        root.attrib["DisplayName"] = self.display_name_var.get()
+
 
     # === MATERIAL ===
     def populate_materials(self):
@@ -343,7 +367,7 @@ class CLBEditor:
 
         def get(tag):
             el = cut.find(tag)
-            return int(float(el.attrib["Value"])) if el else 0
+            return int(float(el.attrib["Value"])) if el is not None else 0
 
         for k in ["Thickness","Desc","NoThickTitle"]:
             self.fields[k].delete(0, tk.END)
@@ -365,7 +389,7 @@ class CLBEditor:
         entry.insert(0,str(v))
 
     def apply_changes(self):
-        if not self.current_entry: return
+        if self.current_entry is None: return
 
         self.save_state()
 
